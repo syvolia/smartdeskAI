@@ -17,3 +17,4 @@ openai==1.54.3
 pgvector==0.3.6
 fakeredis==2.26.2
 python-multipart==0.0.12
+gunicorn==23.0.0
