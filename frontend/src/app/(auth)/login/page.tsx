@@ -1,10 +1,22 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 
 import { LoginForm } from "@/features/auth/login-form";
+import { Skeleton } from "@/components/ui/skeleton";
 
 export const metadata: Metadata = {
   title: "Sign in",
 };
+
+function LoginFormFallback() {
+  return (
+    <div className="space-y-4" aria-hidden="true">
+      <Skeleton className="h-9 w-full" />
+      <Skeleton className="h-9 w-full" />
+      <Skeleton className="h-9 w-full" />
+    </div>
+  );
+}
 
 export default function LoginPage() {
   return (
@@ -31,7 +43,9 @@ export default function LoginPage() {
         </p>
       </div>
 
-      <LoginForm />
+      <Suspense fallback={<LoginFormFallback />}>
+        <LoginForm />
+      </Suspense>
 
       <p className="text-center text-xs text-muted-foreground">
         Need an account? Ask your administrator to invite you.
