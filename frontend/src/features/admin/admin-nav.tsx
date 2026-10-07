@@ -1,21 +1,29 @@
 "use client";
 
 import {
+  Bell,
   Building2,
+  LayoutDashboard,
   Sparkles,
   Tags,
   Timer,
   UserCog,
   UsersRound,
-  LayoutDashboard,
-  Bell,
+  type LucideIcon,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import { cn } from "@/lib/utils";
 
-const LINKS = [
+interface AdminLink {
+  href: string;
+  label: string;
+  icon: LucideIcon;
+  exact?: boolean;
+}
+
+const LINKS: AdminLink[] = [
   { href: "/admin", label: "Overview", icon: LayoutDashboard, exact: true },
   { href: "/admin/organization", label: "Organization", icon: Building2 },
   { href: "/admin/users", label: "Users & agents", icon: UserCog },
@@ -24,7 +32,7 @@ const LINKS = [
   { href: "/admin/slas", label: "SLAs", icon: Timer },
   { href: "/admin/ai", label: "AI", icon: Sparkles },
   { href: "/admin/notifications", label: "Notifications", icon: Bell },
-] as const;
+];
 
 export function AdminNav() {
   const pathname = usePathname();
@@ -49,7 +57,7 @@ export function AdminNav() {
                   "flex items-center gap-2 rounded-md px-2.5 py-1.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
                   active
                     ? "bg-accent text-accent-foreground"
-                    : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+                    : "text-muted-foreground hover:bg-accent/60 hover:text-foreground"
                 )}
               >
                 <Icon className="h-4 w-4" aria-hidden="true" />
