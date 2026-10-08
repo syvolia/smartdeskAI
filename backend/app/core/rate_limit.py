@@ -1,8 +1,8 @@
 """Redis-backed sliding-window rate limiter.
 
 Two failure modes:
-- If Redis is unavailable, requests are allowed. Losing auth is worse
-  than losing rate limiting for a brief window.
+- If Redis is unavailable or misconfigured, requests are allowed. Losing
+  auth is worse than losing rate limiting for a brief window.
 - Keys are namespaced per route + identity (user id or client IP).
 
 Usage:
@@ -16,7 +16,6 @@ import uuid
 from collections.abc import Callable
 
 from fastapi import Depends, Request
-from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
 from app.core.exceptions import RateLimitedError
@@ -55,12 +54,17 @@ def rate_limit(
 
     Uses a sorted set per identity, trimmed to `window_seconds`. This is
     a true sliding window — no burst allowance at window boundaries.
+
+    Fails open: if Redis is None or unreachable, requests are allowed.
     """
 
     async def _check(
         request: Request,
-        redis: Redis = Depends(get_redis),
+        redis=Depends(get_redis),
     ) -> None:
+        if redis is None:
+            return  # fail open — never block requests when Redis is down
+
         key = f"rl:{scope}:{_identity(request)}"
         now_ms = int(time.time() * 1000)
         cutoff_ms = now_ms - window_seconds * 1000
@@ -83,7 +87,6 @@ def rate_limit(
                 await redis.zrem(key, member)
             except RedisError:
                 pass
-            retry_after = window_seconds
             logger.info(
                 "rate_limit_exceeded",
                 scope=scope,
@@ -92,7 +95,7 @@ def rate_limit(
             )
             raise RateLimitedError(
                 "Too many requests. Please slow down.",
-                details={"retry_after_seconds": retry_after},
+                details={"retry_after_seconds": window_seconds},
             )
 
     return _check

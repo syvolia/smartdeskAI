@@ -8,6 +8,10 @@ Subscribing:
   1. Subscribe to `realtime:broadcast`.
   2. On message, drop it if it originated on this instance (we already
      delivered locally). Otherwise forward to local connections.
+
+If Redis is unavailable, the bus returns None from the factory and all
+publishers no-op. Local WebSocket delivery still works within the single
+process (relevant for the Render free tier, where there's only one).
 """
 
 import asyncio
@@ -15,7 +19,6 @@ import json
 import uuid
 from functools import lru_cache
 
-import structlog
 from redis.asyncio import Redis
 
 from app.core.logging import get_logger
@@ -126,6 +129,15 @@ class RealtimeBus:
 
 
 @lru_cache(maxsize=1)
-def get_realtime_bus() -> RealtimeBus:
-    """Process-wide bus. Started/stopped by the FastAPI lifespan."""
-    return RealtimeBus(get_redis(), get_connection_manager())
+def get_realtime_bus() -> RealtimeBus | None:
+    """Process-wide bus. Returns None if Redis is unavailable.
+
+    A bus without Redis still delivers to local connections but won't
+    fan out across instances. In single-instance deployments (Render
+    free tier), local delivery is all that matters.
+    """
+    redis = get_redis()
+    if redis is None:
+        logger.warning("realtime_bus_disabled", reason="no redis client")
+        return None
+    return RealtimeBus(redis, get_connection_manager())

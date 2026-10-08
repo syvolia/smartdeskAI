@@ -1,4 +1,9 @@
-"""In-app channel: writes Notification rows and updates Redis caches."""
+"""In-app channel: writes Notification rows and updates Redis caches.
+
+If Redis is unavailable, the DB write still happens (the notification is
+persisted) but the unread-count cache and pub/sub publish are skipped.
+The next /notifications request recomputes the count from the DB.
+"""
 
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,7 +25,7 @@ def _unread_key(org_id, user_id) -> str:
 class InAppChannel:
     name = "in_app"
 
-    def __init__(self, db: AsyncSession, redis: Redis) -> None:
+    def __init__(self, db: AsyncSession, redis: Redis | None) -> None:
         self.db = db
         self.redis = redis
 
@@ -36,6 +41,23 @@ class InAppChannel:
         )
         self.db.add(row)
         await self.db.flush()
+
+        # Publish the realtime event to any connected clients.
+        from app.realtime.publish import publish_notification
+
+        await publish_notification(row)
+
+        # If Redis is unavailable, we're done — the notification is
+        # persisted, which is what matters. Caches will be recomputed
+        # from the DB on the next read.
+        if self.redis is None:
+            logger.info(
+                "notification_delivered_no_redis",
+                type=message.type.value,
+                user_id=str(message.user_id),
+                org_id=str(message.organization_id),
+            )
+            return
 
         # Bump the cached unread counter. If the cache doesn't have the key
         # (cold start, eviction), leave it absent — the next GET recomputes.

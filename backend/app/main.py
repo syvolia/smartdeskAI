@@ -31,18 +31,18 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         environment=settings.app_env,
     )
 
-    # Start the realtime bus so WebSocket connections can publish and
-    # receive events across this instance and any others behind a load
-    # balancer. The bus subscribes to a Redis channel internally.
+    # Start the realtime bus only if Redis is available. A missing or
+    # misconfigured Redis disables realtime fan-out across instances but
+    # does not prevent the app from serving HTTP.
     bus = get_realtime_bus()
-    await bus.start()
+    if bus is not None:
+        await bus.start()
 
     try:
         yield
     finally:
-        # Stop the bus before tearing down Redis so the subscriber task
-        # can unsubscribe cleanly.
-        await bus.stop()
+        if bus is not None:
+            await bus.stop()
         await dispose_engine()
         await close_redis()
         logger.info("app_stopped")
@@ -59,10 +59,6 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # --- CORS ---
-    # Only the methods and headers the frontend actually uses are allowed.
-    # `allow_credentials=True` + wildcard `*` would be silently ignored by
-    # browsers for methods/headers anyway, so we declare them explicitly.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
@@ -110,8 +106,18 @@ def _register_middleware(app: FastAPI) -> None:
 
 
 def _register_exception_handlers(app: FastAPI) -> None:
+    def _cors_headers(request: Request) -> dict[str, str]:
+        origin = request.headers.get("origin")
+        if origin and origin in settings.cors_origins:
+            return {
+                "Access-Control-Allow-Origin": origin,
+                "Access-Control-Allow-Credentials": "true",
+                "Vary": "Origin",
+            }
+        return {}
+
     @app.exception_handler(AppError)
-    async def handle_app_error(_: Request, exc: AppError) -> JSONResponse:
+    async def handle_app_error(request: Request, exc: AppError) -> JSONResponse:
         return JSONResponse(
             status_code=exc.status_code,
             content={
@@ -121,11 +127,12 @@ def _register_exception_handlers(app: FastAPI) -> None:
                     "details": exc.details,
                 }
             },
+            headers=_cors_headers(request),
         )
 
     @app.exception_handler(RequestValidationError)
     async def handle_validation_error(
-        _: Request, exc: RequestValidationError
+        request: Request, exc: RequestValidationError
     ) -> JSONResponse:
         return JSONResponse(
             status_code=422,
@@ -136,10 +143,13 @@ def _register_exception_handlers(app: FastAPI) -> None:
                     "details": exc.errors(),
                 }
             },
+            headers=_cors_headers(request),
         )
 
     @app.exception_handler(Exception)
-    async def handle_unexpected(_: Request, exc: Exception) -> JSONResponse:
+    async def handle_unexpected(
+        request: Request, exc: Exception
+    ) -> JSONResponse:
         logger.exception("unhandled_exception", error=str(exc))
         return JSONResponse(
             status_code=500,
@@ -149,6 +159,7 @@ def _register_exception_handlers(app: FastAPI) -> None:
                     "message": "An unexpected error occurred.",
                 }
             },
+            headers=_cors_headers(request),
         )
 
 

@@ -2,6 +2,10 @@
 
 These functions accept already-loaded ORM objects and build the wire event.
 They never query the database — callers pass everything needed.
+
+If the realtime bus is unavailable (Redis down), every publisher no-ops.
+The event is silently dropped; the REST endpoints remain the source of
+truth, so clients converge on the next refetch.
 """
 
 import uuid
@@ -13,7 +17,10 @@ from app.realtime.schemas import EventType, RealtimeEvent
 
 async def publish_notification(notification: Notification) -> None:
     """Publish a user-targeted notification event."""
-    await get_realtime_bus().publish(
+    bus = get_realtime_bus()
+    if bus is None:
+        return
+    await bus.publish(
         RealtimeEvent(
             type=EventType.NOTIFICATION_CREATED,
             organization_id=notification.organization_id,
@@ -44,7 +51,10 @@ async def publish_ticket_event(
     `customer_email` is the ticket's customer's email (string, lowercased).
     Delivery to CUSTOMER connections relies on it — no DB hit required.
     """
-    await get_realtime_bus().publish(
+    bus = get_realtime_bus()
+    if bus is None:
+        return
+    await bus.publish(
         RealtimeEvent(
             type=event_type,
             organization_id=ticket.organization_id,
@@ -57,7 +67,11 @@ async def publish_ticket_event(
 
 
 async def publish_ticket_comment(
-    *, ticket: Ticket, comment: TicketComment, actor_user_id: uuid.UUID, customer_email: str
+    *,
+    ticket: Ticket,
+    comment: TicketComment,
+    actor_user_id: uuid.UUID,
+    customer_email: str,
 ) -> None:
     await publish_ticket_event(
         event_type=EventType.TICKET_COMMENT_CREATED,
@@ -83,7 +97,7 @@ async def publish_ticket_status(
     if to_status == "RESOLVED":
         event_type = EventType.TICKET_RESOLVED
     elif to_status == "CLOSED":
-        event_type = EventType.TICKET_STATUS_CHANGED  # or a dedicated CLOSED
+        event_type = EventType.TICKET_STATUS_CHANGED
     elif from_status in ("RESOLVED", "CLOSED"):
         event_type = EventType.TICKET_REOPENED
 
