@@ -2,6 +2,7 @@
 
 from functools import lru_cache
 from typing import Literal
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -12,28 +13,67 @@ _DEV_SECRET = "dev-insecure-secret-change-me"
 
 
 def _normalize_async_db_url(url: str) -> str:
-    """SQLAlchemy async needs `postgresql+asyncpg://`, and asyncpg wants
-    `ssl=` not `sslmode=`. This normalizes whatever the platform gave us."""
+    """Normalize a Postgres URL for SQLAlchemy's asyncpg driver.
+
+    Three things can go wrong when a managed host (Neon, Supabase, etc.)
+    hands you a connection string:
+
+    1. It starts with `postgres://` or `postgresql://` — SQLAlchemy
+       needs the explicit `postgresql+asyncpg://` dialect prefix.
+    2. It uses `sslmode=require` — libpq/psycopg2 syntax. asyncpg wants
+       `ssl=require`.
+    3. It uses `channel_binding=require` — another psycopg-only param
+       that asyncpg rejects outright.
+
+    Additionally, PgBouncer-style pooled endpoints (Neon's `-pooler`
+    hostnames) don't support prepared statement caching, so we disable
+    it explicitly.
+    """
     url = url.strip()
     if url.startswith("postgres://"):
         url = "postgresql+asyncpg://" + url[len("postgres://"):]
     elif url.startswith("postgresql://"):
         url = "postgresql+asyncpg://" + url[len("postgresql://"):]
-    # asyncpg rejects `sslmode`; it accepts `ssl`.
-    url = url.replace("sslmode=require", "ssl=require")
-    url = url.replace("sslmode=prefer", "ssl=prefer")
-    url = url.replace("sslmode=disable", "ssl=disable")
-    return url
+
+    parsed = urlparse(url)
+    params: dict[str, list[str]] = parse_qs(parsed.query, keep_blank_values=True)
+
+    # asyncpg rejects these psycopg-only parameters.
+    params.pop("channel_binding", None)
+    params.pop("options", None)
+
+    # sslmode -> ssl (asyncpg wants the latter).
+    if "sslmode" in params:
+        params["ssl"] = params.pop("sslmode")
+
+    # PgBouncer in transaction mode doesn't support prepared statement
+    # caching. Neon's `-pooler` endpoints are PgBouncer.
+    if "pooler" in (parsed.hostname or ""):
+        params["prepared_statement_cache_size"] = ["0"]
+
+    flat = {k: v[0] if v else "" for k, v in params.items()}
+    new_query = urlencode(flat)
+    return urlunparse(parsed._replace(query=new_query))
 
 
 def _normalize_sync_db_url(url: str) -> str:
-    """Same normalization for the sync driver used by Alembic."""
+    """Normalize a Postgres URL for SQLAlchemy's psycopg2 driver (Alembic).
+
+    psycopg2 is libpq-based, so `sslmode` is fine. We only need to
+    convert the dialect prefix — `postgres://` is a legacy Heroku-style
+    scheme that older drivers accepted but SQLAlchemy 2.x rejects.
+    """
     url = url.strip()
     if url.startswith("postgres://"):
         url = "postgresql+psycopg2://" + url[len("postgres://"):]
     elif url.startswith("postgresql://"):
         url = "postgresql+psycopg2://" + url[len("postgresql://"):]
-    return url
+
+    parsed = urlparse(url)
+    params: dict[str, list[str]] = parse_qs(parsed.query, keep_blank_values=True)
+    flat = {k: v[0] if v else "" for k, v in params.items()}
+    new_query = urlencode(flat)
+    return urlunparse(parsed._replace(query=new_query))
 
 
 class Settings(BaseSettings):
@@ -72,9 +112,10 @@ class Settings(BaseSettings):
             return [o.strip() for o in value.split(",") if o.strip()]
         return value
 
-    # --- Explicit DATABASE_URL / REDIS_URL (managed-host overrides) ---
-    # These are declared as fields so pydantic-settings picks them up from
-    # the environment without any custom property logic.
+    # --- Managed-host overrides ---
+    # Declared as real pydantic fields so pydantic-settings picks them up
+    # from the environment. Aliased to the env var names used by managed
+    # Postgres and Redis providers.
     database_url_raw: str | None = Field(default=None, alias="DATABASE_URL")
     redis_url_raw: str | None = Field(default=None, alias="REDIS_URL")
 
@@ -117,7 +158,7 @@ class Settings(BaseSettings):
 
     @property
     def database_url(self) -> str:
-        """Async URL for SQLAlchemy."""
+        """Async SQLAlchemy URL."""
         if self.database_url_raw:
             return _normalize_async_db_url(self.database_url_raw)
         return (
@@ -127,7 +168,7 @@ class Settings(BaseSettings):
 
     @property
     def database_url_sync(self) -> str:
-        """Sync URL for Alembic."""
+        """Sync SQLAlchemy URL used by Alembic."""
         if self.database_url_raw:
             return _normalize_sync_db_url(self.database_url_raw)
         return (
@@ -160,16 +201,16 @@ def get_settings() -> Settings:
     settings = Settings()
 
     # One-time startup log so we can see exactly what the app resolved.
+    # Passwords and tokens are redacted. Only the scheme, host, and
+    # presence flags are logged.
     import os
+    import re
 
     import structlog
 
     log = structlog.get_logger("config")
 
     def _redact(url: str) -> str:
-        # Strip anything that looks like a password between : and @.
-        import re
-
         return re.sub(r"://([^:]+):[^@]+@", r"://\1:***@", url)
 
     log.info(
