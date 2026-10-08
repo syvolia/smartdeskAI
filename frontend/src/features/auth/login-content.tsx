@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 
 import { DemoCredentials } from "@/features/auth/demo-credentials";
 import { LoginForm } from "@/features/auth/login-form";
+import { Skeleton } from "@/components/ui/skeleton";
 
 interface DemoDefaults {
   email: string;
@@ -11,6 +12,18 @@ interface DemoDefaults {
   /** Bumped on each "Use" click to force LoginForm to remount with the
    *  new default values. */
   key: number;
+}
+
+function LoginFormFallback() {
+  return (
+    <div className="space-y-4" aria-hidden="true">
+      <Skeleton className="h-4 w-12" />
+      <Skeleton className="h-9 w-full" />
+      <Skeleton className="h-4 w-16" />
+      <Skeleton className="h-9 w-full" />
+      <Skeleton className="h-9 w-full" />
+    </div>
+  );
 }
 
 export function LoginContent() {
@@ -50,11 +63,13 @@ export function LoginContent() {
 
       <DemoCredentials onUse={handleUse} activeEmail={defaults.email || null} />
 
-      <LoginForm
-        key={defaults.key}
-        defaultEmail={defaults.email}
-        defaultPassword={defaults.password}
-      />
+      <Suspense fallback={<LoginFormFallback />}>
+        <LoginForm
+          key={defaults.key}
+          defaultEmail={defaults.email}
+          defaultPassword={defaults.password}
+        />
+      </Suspense>
 
       <p className="text-center text-xs text-muted-foreground">
         Need an account? Ask your administrator to invite you.
