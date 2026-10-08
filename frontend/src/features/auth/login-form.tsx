@@ -21,7 +21,15 @@ const schema = z.object({
 
 type FormValues = z.infer<typeof schema>;
 
-export function LoginForm() {
+interface LoginFormProps {
+  defaultEmail?: string;
+  defaultPassword?: string;
+}
+
+export function LoginForm({
+  defaultEmail = "",
+  defaultPassword = "",
+}: LoginFormProps) {
   const { login } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -34,7 +42,7 @@ export function LoginForm() {
     formState: { errors, isSubmitting },
   } = useForm<FormValues>({
     resolver: zodResolver(schema),
-    defaultValues: { email: "", password: "" },
+    defaultValues: { email: defaultEmail, password: defaultPassword },
   });
 
   const onSubmit = async (values: FormValues) => {
@@ -46,7 +54,10 @@ export function LoginForm() {
       if (error instanceof ApiError) {
         setFormError(error.message);
       } else {
-        setFormError("Unable to sign in. Please try again.");
+        // Most likely the backend is waking up from a Render cold start.
+        setFormError(
+          "The server is waking up. This can take up to a minute on the first request. Please try again.",
+        );
       }
     }
   };
@@ -71,7 +82,6 @@ export function LoginForm() {
           id="email"
           type="email"
           autoComplete="email"
-          autoFocus
           aria-invalid={errors.email ? "true" : undefined}
           aria-describedby={errors.email ? "email-error" : undefined}
           {...register("email")}

@@ -5,6 +5,11 @@ creates a fresh, deterministic dataset.
 
 Run:
     cd backend && python -m app.scripts.seed
+
+Demo accounts (password `Demo123!` for all):
+    Admin    → admin@smartdesk-demo.dev
+    Agent    → agent1@smartdesk-demo.dev
+    Customer → customer@smartdesk-demo.dev
 """
 
 import asyncio
@@ -41,8 +46,8 @@ from app.models import (
 
 DEMO_ORG_SLUG = "demo"
 DEMO_PASSWORD = "Demo123!"
+DEMO_CUSTOMER_EMAIL = "customer@smartdesk-demo.dev"
 RNG = random.Random(42)
-DEMO_DOMAIN = "smartdesk-demo.dev"
 
 
 TICKET_TEMPLATES: list[tuple[str, str, TicketStatus, TicketPriority, TicketSource]] = [
@@ -91,7 +96,7 @@ async def seed(session: AsyncSession) -> None:
     password_hash = hash_password(DEMO_PASSWORD)
     admin = User(
         organization_id=org.id,
-        email=f"admin@{DEMO_DOMAIN}",
+        email="admin@smartdesk-demo.dev",
         full_name="Ada Admin",
         hashed_password=password_hash,
         role=UserRole.ADMIN,
@@ -99,7 +104,7 @@ async def seed(session: AsyncSession) -> None:
     agents = [
         User(
             organization_id=org.id,
-            email=f"agent{i}@{DEMO_DOMAIN}",
+            email=f"agent{i}@smartdesk-demo.dev",
             full_name=name,
             hashed_password=password_hash,
             role=UserRole.AGENT,
@@ -146,31 +151,55 @@ async def seed(session: AsyncSession) -> None:
     await session.flush()
 
     # --- Customers ---
+    # The first customer has a matching User account (below) so visitors
+    # can log in with the CUSTOMER role and see the customer-side view.
     customers = [
         Customer(
             organization_id=org.id,
-            email=f"customer{i}@{DEMO_DOMAIN}",
-            full_name=name,
-            company=company,
-            phone=f"+1-555-{1000 + i:04d}",
-        )
-        for i, (name, company) in enumerate(
-            [
-                ("Alice Nguyen", "Northwind"),
-                ("Bob Sanchez", "Contoso"),
-                ("Carol Patel", "Fabrikam"),
-                ("David Kim", "Initech"),
-                ("Eve Larsson", "Globex"),
-                ("Frank Osei", "Umbrella"),
-                ("Grace Müller", "Stark Industries"),
-                ("Hassan Ali", "Wayne Enterprises"),
-                ("Ivy Chen", "Soylent"),
-                ("Jack O'Connor", "Cyberdyne"),
-            ],
-            start=1,
-        )
+            email=DEMO_CUSTOMER_EMAIL,
+            full_name="Casey Customer",
+            company="Acme Demo Corp",
+            phone="+1-555-0100",
+        ),
+        *[
+            Customer(
+                organization_id=org.id,
+                email=f"customer{i}@example.test",
+                full_name=name,
+                company=company,
+                phone=f"+1-555-{1000 + i:04d}",
+            )
+            for i, (name, company) in enumerate(
+                [
+                    ("Alice Nguyen", "Northwind"),
+                    ("Bob Sanchez", "Contoso"),
+                    ("Carol Patel", "Fabrikam"),
+                    ("David Kim", "Initech"),
+                    ("Eve Larsson", "Globex"),
+                    ("Frank Osei", "Umbrella"),
+                    ("Grace Müller", "Stark Industries"),
+                    ("Hassan Ali", "Wayne Enterprises"),
+                    ("Ivy Chen", "Soylent"),
+                    ("Jack O'Connor", "Cyberdyne"),
+                ],
+                start=1,
+            )
+        ],
     ]
     session.add_all(customers)
+    await session.flush()
+
+    # --- Demo customer user ---
+    # The email must match the Customer record above so the ticket access
+    # check passes (it compares user.email to ticket.customer.email).
+    customer_user = User(
+        organization_id=org.id,
+        email=DEMO_CUSTOMER_EMAIL,
+        full_name="Casey Customer",
+        hashed_password=password_hash,
+        role=UserRole.CUSTOMER,
+    )
+    session.add(customer_user)
     await session.flush()
 
     # --- SLAs ---
@@ -199,9 +228,13 @@ async def seed(session: AsyncSession) -> None:
         team = RNG.choice([None, team_tier1, team_tier2])
         category = RNG.choice(categories)
 
+        # Tickets 0 and 11 belong to the demo customer — everyone else
+        # gets one of the other customers.
+        customer = customers[index % len(customers)]
+
         ticket = Ticket(
             organization_id=org.id,
-            customer_id=customers[index % len(customers)].id,
+            customer_id=customer.id,
             assigned_agent_id=agent.id if agent else None,
             team_id=team.id if team else None,
             category_id=category.id,
@@ -329,7 +362,11 @@ async def main() -> None:
         await session.commit()
     await dispose_engine()
     print(f"Seeded organization '{DEMO_ORG_SLUG}' with demo data.")
-    print(f"Login with admin@{DEMO_DOMAIN} / {DEMO_PASSWORD}")
+    print()
+    print("Demo accounts (password: Demo123! for all):")
+    print("  Admin    → admin@smartdesk-demo.dev")
+    print("  Agent    → agent1@smartdesk-demo.dev")
+    print("  Customer → customer@smartdesk-demo.dev")
 
 
 if __name__ == "__main__":
