@@ -15,19 +15,12 @@ _DEV_SECRET = "dev-insecure-secret-change-me"
 def _normalize_async_db_url(url: str) -> str:
     """Normalize a Postgres URL for SQLAlchemy's asyncpg driver.
 
-    Three things can go wrong when a managed host (Neon, Supabase, etc.)
-    hands you a connection string:
-
-    1. It starts with `postgres://` or `postgresql://` — SQLAlchemy
-       needs the explicit `postgresql+asyncpg://` dialect prefix.
-    2. It uses `sslmode=require` — libpq/psycopg2 syntax. asyncpg wants
-       `ssl=require`.
-    3. It uses `channel_binding=require` — another psycopg-only param
-       that asyncpg rejects outright.
-
-    Additionally, PgBouncer-style pooled endpoints (Neon's `-pooler`
-    hostnames) don't support prepared statement caching, so we disable
-    it explicitly.
+    - Converts `postgres://` and `postgresql://` to `postgresql+asyncpg://`
+    - Translates `sslmode` to `ssl` (asyncpg's required form)
+    - Strips psycopg-only params (`channel_binding`, `options`)
+    - Forces `statement_cache_size=0` when connecting through a pooler
+      (Neon, Supabase) because PgBouncer transaction mode does not
+      support server-side prepared statements.
     """
     url = url.strip()
     if url.startswith("postgres://"):
@@ -46,10 +39,14 @@ def _normalize_async_db_url(url: str) -> str:
     if "sslmode" in params:
         params["ssl"] = params.pop("sslmode")
 
-    # PgBouncer in transaction mode doesn't support prepared statement
-    # caching. Neon's `-pooler` endpoints are PgBouncer.
+    # Neon's `-pooler` endpoints use PgBouncer in transaction mode.
+    # Prepared statements must be disabled to avoid
+    # InvalidSQLStatementNameError under concurrent load.
     if "pooler" in (parsed.hostname or ""):
+        # This is the SQLAlchemy-level parameter.
         params["prepared_statement_cache_size"] = ["0"]
+        # This is the asyncpg-level parameter (belt-and-suspenders).
+        params["statement_cache_size"] = ["0"]
 
     flat = {k: v[0] if v else "" for k, v in params.items()}
     new_query = urlencode(flat)
@@ -57,12 +54,7 @@ def _normalize_async_db_url(url: str) -> str:
 
 
 def _normalize_sync_db_url(url: str) -> str:
-    """Normalize a Postgres URL for SQLAlchemy's psycopg2 driver (Alembic).
-
-    psycopg2 is libpq-based, so `sslmode` is fine. We only need to
-    convert the dialect prefix — `postgres://` is a legacy Heroku-style
-    scheme that older drivers accepted but SQLAlchemy 2.x rejects.
-    """
+    """Normalize a Postgres URL for SQLAlchemy's psycopg2 driver (Alembic)."""
     url = url.strip()
     if url.startswith("postgres://"):
         url = "postgresql+psycopg2://" + url[len("postgres://"):]
@@ -107,15 +99,11 @@ class Settings(BaseSettings):
             value = value.strip()
             if value.startswith("[") and value.endswith("]"):
                 import json
-
                 return json.loads(value)
             return [o.strip() for o in value.split(",") if o.strip()]
         return value
 
     # --- Managed-host overrides ---
-    # Declared as real pydantic fields so pydantic-settings picks them up
-    # from the environment. Aliased to the env var names used by managed
-    # Postgres and Redis providers.
     database_url_raw: str | None = Field(default=None, alias="DATABASE_URL")
     redis_url_raw: str | None = Field(default=None, alias="REDIS_URL")
 
@@ -200,12 +188,8 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     settings = Settings()
 
-    # One-time startup log so we can see exactly what the app resolved.
-    # Passwords and tokens are redacted. Only the scheme, host, and
-    # presence flags are logged.
     import os
     import re
-
     import structlog
 
     log = structlog.get_logger("config")
