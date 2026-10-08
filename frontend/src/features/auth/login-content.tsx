@@ -2,9 +2,9 @@
 
 import { Suspense, useState } from "react";
 
+import { Skeleton } from "@/components/ui/skeleton";
 import { DemoCredentials } from "@/features/auth/demo-credentials";
 import { LoginForm } from "@/features/auth/login-form";
-import { Skeleton } from "@/components/ui/skeleton";
 
 interface DemoDefaults {
   email: string;
@@ -61,8 +61,6 @@ export function LoginContent() {
         </p>
       </div>
 
-      <DemoCredentials onUse={handleUse} activeEmail={defaults.email || null} />
-
       <Suspense fallback={<LoginFormFallback />}>
         <LoginForm
           key={defaults.key}
@@ -70,6 +68,8 @@ export function LoginContent() {
           defaultPassword={defaults.password}
         />
       </Suspense>
+
+      <DemoCredentials onUse={handleUse} activeEmail={defaults.email || null} />
 
       <p className="text-center text-xs text-muted-foreground">
         Need an account? Ask your administrator to invite you.
