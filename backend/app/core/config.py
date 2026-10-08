@@ -15,12 +15,15 @@ _DEV_SECRET = "dev-insecure-secret-change-me"
 def _normalize_async_db_url(url: str) -> str:
     """Normalize a Postgres URL for SQLAlchemy's asyncpg driver.
 
-    - Converts `postgres://` and `postgresql://` to `postgresql+asyncpg://`
-    - Translates `sslmode` to `ssl` (asyncpg's required form)
-    - Strips psycopg-only params (`channel_binding`, `options`)
-    - Forces `statement_cache_size=0` when connecting through a pooler
-      (Neon, Supabase) because PgBouncer transaction mode does not
-      support server-side prepared statements.
+    Converts the scheme, translates `sslmode` to `ssl`, and strips
+    params that asyncpg doesn't understand (`channel_binding`,
+    `options`).
+
+    IMPORTANT: do NOT add `statement_cache_size` or similar here. Query
+    params arrive as strings; asyncpg expects an int and will raise
+    `TypeError: '<' not supported between instances of 'str' and 'int'`.
+    That setting belongs in `connect_args` in `app/db/session.py`, where
+    Python preserves the integer type.
     """
     url = url.strip()
     if url.startswith("postgres://"):
@@ -35,18 +38,14 @@ def _normalize_async_db_url(url: str) -> str:
     params.pop("channel_binding", None)
     params.pop("options", None)
 
+    # Defensive: drop any stale statement-cache params that might still
+    # be sitting in a saved URL from an earlier iteration.
+    params.pop("statement_cache_size", None)
+    params.pop("prepared_statement_cache_size", None)
+
     # sslmode -> ssl (asyncpg wants the latter).
     if "sslmode" in params:
         params["ssl"] = params.pop("sslmode")
-
-    # Neon's `-pooler` endpoints use PgBouncer in transaction mode.
-    # Prepared statements must be disabled to avoid
-    # InvalidSQLStatementNameError under concurrent load.
-    if "pooler" in (parsed.hostname or ""):
-        # This is the SQLAlchemy-level parameter.
-        params["prepared_statement_cache_size"] = ["0"]
-        # This is the asyncpg-level parameter (belt-and-suspenders).
-        params["statement_cache_size"] = ["0"]
 
     flat = {k: v[0] if v else "" for k, v in params.items()}
     new_query = urlencode(flat)
@@ -146,7 +145,6 @@ class Settings(BaseSettings):
 
     @property
     def database_url(self) -> str:
-        """Async SQLAlchemy URL."""
         if self.database_url_raw:
             return _normalize_async_db_url(self.database_url_raw)
         return (
@@ -156,7 +154,6 @@ class Settings(BaseSettings):
 
     @property
     def database_url_sync(self) -> str:
-        """Sync SQLAlchemy URL used by Alembic."""
         if self.database_url_raw:
             return _normalize_sync_db_url(self.database_url_raw)
         return (
@@ -190,6 +187,7 @@ def get_settings() -> Settings:
 
     import os
     import re
+
     import structlog
 
     log = structlog.get_logger("config")
