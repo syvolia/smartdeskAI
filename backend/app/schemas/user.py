@@ -3,9 +3,10 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, EmailStr
+from pydantic import BaseModel, ConfigDict
 
 from app.models.enums import UserRole
+from app.schemas.email import EmailStr
 
 
 class UserResponse(BaseModel):

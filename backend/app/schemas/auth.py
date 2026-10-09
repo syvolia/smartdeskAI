@@ -1,6 +1,7 @@
 """Authentication request and response schemas."""
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel,Field
+from app.schemas.email import EmailStr
 
 from app.schemas.user import UserResponse
 

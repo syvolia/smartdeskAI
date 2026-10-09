@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.enums import (
     TicketEventType,
@@ -13,6 +13,7 @@ from app.models.enums import (
     TicketStatus,
     UserRole,
 )
+from app.schemas.email import EmailStr
 
 
 # ---------- nested summaries ----------
@@ -87,6 +88,20 @@ class TicketListResponse(BaseModel):
     page: int
     page_size: int
     pages: int
+
+
+class TicketAttachmentResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    organization_id: UUID
+    ticket_id: UUID
+    comment_id: UUID | None
+    uploaded_by_user_id: UUID | None
+    file_name: str
+    content_type: str
+    size_bytes: int
+    created_at: datetime
 
 
 # ---------- requests ----------
@@ -175,16 +190,3 @@ SortField = Literal[
     "title",
 ]
 SortOrder = Literal["asc", "desc"]
-
-class TicketAttachmentResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: UUID
-    organization_id: UUID
-    ticket_id: UUID
-    comment_id: UUID | None
-    uploaded_by_user_id: UUID | None
-    file_name: str
-    content_type: str
-    size_bytes: int
-    created_at: datetime
