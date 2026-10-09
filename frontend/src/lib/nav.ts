@@ -22,6 +22,7 @@ export interface NavItem {
   href: string;
   label: string;
   icon: LucideIcon;
+  /** Only show this item if the current user's role is in this list. */
   roles?: UserRole[];
 }
 
@@ -37,7 +38,12 @@ export const NAV_SECTIONS: NavSection[] = [
     items: [
       { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
       { href: "/tickets", label: "Tickets", icon: Ticket },
-      { href: "/customers", label: "Customers", icon: Users },
+      {
+        href: "/customers",
+        label: "Customers",
+        icon: Users,
+        roles: ["ADMIN", "AGENT"],
+      },
     ],
   },
   {
@@ -48,9 +54,18 @@ export const NAV_SECTIONS: NavSection[] = [
   },
   {
     title: "Insights",
+    roles: ["ADMIN", "AGENT"],
     items: [
       { href: "/analytics", label: "Analytics", icon: BarChart3 },
       { href: "/notifications", label: "Notifications", icon: Bell },
+    ],
+  },
+  {
+    title: "Account",
+    roles: ["CUSTOMER"],
+    items: [
+      { href: "/notifications", label: "Notifications", icon: Bell },
+      { href: "/settings", label: "Settings", icon: Settings },
     ],
   },
   {
